@@ -11,3 +11,5 @@ ollama
 pdfminer.six
 python-docx
 torch
+pypdf
+
