@@ -1,6 +1,6 @@
 
 MILVUS_CONFIG = {
-    "host": "127.0.0.1",
+    "host": "172.31.16.237",
     "port": "19530",
     "collection_name": "LangChainCollection1"
 }
