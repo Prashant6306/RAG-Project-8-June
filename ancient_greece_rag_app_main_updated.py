@@ -690,17 +690,7 @@ def show_system_status():
         </div>
         """, unsafe_allow_html=True)
         
-        # Show example data structure
-        st.subheader("📁 Expected Data Structure")
-        st.code("""
-        ancient_greece_data/
-        ├── document1.txt
-        ├── document2.txt
-        ├── subfolder/
-        │   ├── document3.txt
-        │   └── document4.txt
-        └── ...
-        """)
+
     else:
         # System Information
         col1, col2, col3, col4 = st.columns(4)
