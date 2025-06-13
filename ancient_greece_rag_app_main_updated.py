@@ -37,6 +37,18 @@ except ImportError:
         def invoke(self, prompt):
             return "Ollama not available. Please install langchain-ollama or use alternative LLM."
 
+# OpenAI imports
+try:
+    from langchain_openai import ChatOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    class ChatOpenAI:
+        def __init__(self, **kwargs):
+            self.model = kwargs.get('model', 'gpt-4')
+        def invoke(self, prompt):
+            return "OpenAI not available. Please install langchain-openai."
+
 # Try to import Milvus, if not available use simple vector store
 try:
     from langchain_milvus import Milvus
@@ -127,8 +139,10 @@ class Config:
         self.COLLECTION_NAME = "AncientGreece_DocLevel"
         self.EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
         self.RETRIEVAL_K = 3
-        self.LLM_MODEL = "llama3.2"
+        self.LLM_MODEL = "gpt-4"
+        self.LLM_PROVIDER = "openai"
         self.LLM_BASE_URL = "http://localhost:11434"
+        self.OPENAI_API_KEY = ""
 
 # Initialize session state
 if 'config' not in st.session_state:
@@ -482,15 +496,44 @@ def main():
             index=0
         )
         
-        st.session_state.config.LLM_MODEL = st.text_input(
-            "LLM Model", 
-            value=st.session_state.config.LLM_MODEL
+        # LLM Provider Selection
+        llm_provider = st.selectbox(
+            "LLM Provider",
+            ["OpenAI (GPT-4)", "Ollama (Local)"],
+            index=0
         )
         
-        st.session_state.config.LLM_BASE_URL = st.text_input(
-            "LLM Base URL", 
-            value=st.session_state.config.LLM_BASE_URL
-        )
+        if llm_provider == "OpenAI (GPT-4)":
+            st.session_state.config.LLM_PROVIDER = "openai"
+            st.session_state.config.LLM_MODEL = st.selectbox(
+                "OpenAI Model",
+                ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
+                index=0
+            )
+            
+            # OpenAI API Key input
+            api_key = st.text_input(
+                "OpenAI API Key",
+                value=st.session_state.config.OPENAI_API_KEY,
+                type="password",
+                help="Enter your OpenAI API Key"
+            )
+            st.session_state.config.OPENAI_API_KEY = api_key
+            
+            if not api_key:
+                st.warning("Please enter your OpenAI API Key to use GPT models.")
+        
+        else:  # Ollama
+            st.session_state.config.LLM_PROVIDER = "ollama"
+            st.session_state.config.LLM_MODEL = st.text_input(
+                "Ollama Model", 
+                value="llama3.2"
+            )
+            
+            st.session_state.config.LLM_BASE_URL = st.text_input(
+                "Ollama Base URL", 
+                value=st.session_state.config.LLM_BASE_URL
+            )
         
         # Retrieval Settings
         st.subheader("🔍 Retrieval Settings")
@@ -554,7 +597,10 @@ def show_dependency_warnings():
         warnings.append("🟡 Milvus not available - using simple vector store fallback")
     
     if not OLLAMA_AVAILABLE:
-        warnings.append("🟡 Ollama not available - LLM functionality limited")
+        warnings.append("🟡 Ollama not available - limited to OpenAI models")
+    
+    if not OPENAI_AVAILABLE:
+        warnings.append("🟡 OpenAI not available - limited to Ollama models")
     
     if warnings:
         with st.expander("⚠️ System Warnings", expanded=False):
@@ -645,14 +691,28 @@ def initialize_system():
             progress_bar.progress(90)
             
             try:
-                if OLLAMA_AVAILABLE:
-                    llm = ChatOllama(
-                        model=st.session_state.config.LLM_MODEL,
-                        base_url=st.session_state.config.LLM_BASE_URL,
-                        temperature=0.1
+                if st.session_state.config.LLM_PROVIDER == "openai":
+                    if not st.session_state.config.OPENAI_API_KEY:
+                        st.error("Please provide OpenAI API Key")
+                        return
+                    
+                    # Set environment variable for OpenAI
+                    os.environ["OPENAI_API_KEY"] = st.session_state.config.OPENAI_API_KEY
+                    
+                    llm = ChatOpenAI(
+                        model_name=st.session_state.config.LLM_MODEL,
+                        temperature=0.1,
+                        api_key=st.session_state.config.OPENAI_API_KEY
                     )
-                else:
-                    llm = ChatOllama()  # Mock LLM
+                else:  # Ollama
+                    if OLLAMA_AVAILABLE:
+                        llm = ChatOllama(
+                            model=st.session_state.config.LLM_MODEL,
+                            base_url=st.session_state.config.LLM_BASE_URL,
+                            temperature=0.1
+                        )
+                    else:
+                        llm = ChatOllama()  # Mock LLM
                 
                 st.session_state.llm = llm
             except Exception as e:
@@ -684,6 +744,7 @@ def show_system_status():
         <ol>
         <li>Configure your settings in the sidebar</li>
         <li>Make sure your data directory contains Ancient Greece text files</li>
+        <li>Enter your OpenAI API Key if using GPT models</li>
         <li>Click "Initialize System" to load documents and setup the vector store</li>
         <li>Start asking questions in the "Ask Questions" tab</li>
         </ol>
@@ -712,14 +773,14 @@ def show_system_status():
         st.subheader("⚙️ Current Configuration")
         config_data = {
             "Setting": [
-                "Data Directory", "Embedding Model", "LLM Model", "LLM Base URL",
+                "Data Directory", "Embedding Model", "LLM Provider", "LLM Model",
                 "Retrieval K", "Vector Store Type"
             ],
             "Value": [
                 st.session_state.config.DATA_DIR,
                 st.session_state.config.EMBEDDING_MODEL,
+                st.session_state.config.LLM_PROVIDER,
                 st.session_state.config.LLM_MODEL,
-                st.session_state.config.LLM_BASE_URL,
                 st.session_state.config.RETRIEVAL_K,
                 "Milvus" if MILVUS_AVAILABLE else "Simple"
             ]
@@ -823,15 +884,17 @@ def get_answer(question, show_sources=True):
             
             context = "\n\n".join(formatted_context)
             
-            # Create prompt
+            # Create clean prompt without document citations
             prompt_template = """You are a historian specializing in Ancient Greece. Answer the question based on the provided documents.
+
+Use the information from the documents to provide a comprehensive and accurate answer. Do not include document references or citations in your response - just provide a clear, direct answer based on the information available.
 
 Documents:
 {context}
 
 Question: {question}
 
-Answer:"""
+Provide a clear, direct answer without mentioning document sources or numbers:"""
             
             # Get answer from LLM
             if st.session_state.llm is None:
@@ -1035,15 +1098,17 @@ def run_evaluation(eval_questions):
                 
                 context_text = "\n\n".join(formatted_context)
                 
-                # Create prompt
+                # Create clean prompt without document citations
                 prompt_template = """You are a historian specializing in Ancient Greece. Answer the question based on the provided documents.
+
+Use the information from the documents to provide a comprehensive and accurate answer. Do not include document references or citations in your response - just provide a clear, direct answer based on the information available.
 
 Documents:
 {context}
 
 Question: {question}
 
-Answer:"""
+Provide a clear, direct answer without mentioning document sources or numbers:"""
                 
                 formatted_prompt = prompt_template.format(context=context_text, question=question)
                 
